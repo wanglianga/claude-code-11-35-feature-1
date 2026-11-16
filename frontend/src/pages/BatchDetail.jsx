@@ -49,6 +49,8 @@ export default function BatchDetail() {
       <h1 className="page-title">批次 {data.id}</h1>
       <p className="page-desc">
         {data.contract.name} · 车辆 {data.vehicle_id} · 服务时间 <Ts value={data.service_time} />
+        {' · '}
+        <a href={`/spacetime/${data.id}`}>时空证据状态与路径下钻 →</a>
       </p>
       {error && <div className="alert error">{error}</div>}
       {notice && <div className="alert ok">{notice}</div>}

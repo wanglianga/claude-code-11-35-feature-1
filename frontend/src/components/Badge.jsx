@@ -27,6 +27,25 @@ const LABELS = {
   // 校准
   active: ['有效', 'ok'],
   corrected: ['已更正', 'warn'],
+  // 时空证据状态
+  trusted: ['可信', 'ok'],
+  limited: ['受限', 'warn'],
+  uncertifiable: ['不可认证', 'bad'],
+  review: ['待核', 'hold'],
+  // 声明式规则结果
+  pass: ['通过', 'ok'],
+  warn: ['受限', 'warn'],
+  fail: ['不通过', 'bad'],
+  // 终端
+  retired: ['已退役', 'bad'],
+  valid: ['有效', 'ok'],
+  no_install: ['无安装记录', 'bad'],
+  // 地理区域
+  target: ['目标区域', 'info'],
+  gate: ['门岗', 'info'],
+  corridor: ['走廊', 'hold'],
+  buffer: ['缓冲区', 'warn'],
+  anchor: ['锚点', 'info'],
   // 其他
   cross_tier: ['跨阶梯', 'warn'],
 }

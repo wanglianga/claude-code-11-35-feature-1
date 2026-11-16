@@ -5,13 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import auth, batches, catalogs, evidence, reports
+from .api import auth, batches, catalogs, evidence, reports, spacetime
 from .config import settings
 from .db import init_db
 
 app = FastAPI(
-    title="收运批次重量一致性与计费差异数据服务",
-    version="1.0.0",
+    title="收运批次重量一致性与计费差异数据服务（含时空证据状态）",
+    version="1.1.0",
     description=(
         "以来源证据库、批次关系册、计量裁定器、费率编译器与差异发布器，"
         "发布可审计的收运重量、计费依据与差异范围。本服务不派车、不卸料、不审批付款。"
@@ -31,6 +31,7 @@ app.include_router(evidence.router)
 app.include_router(batches.router)
 app.include_router(catalogs.router)
 app.include_router(reports.router)
+app.include_router(spacetime.router)
 
 
 @app.on_event("startup")

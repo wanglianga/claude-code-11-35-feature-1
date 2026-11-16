@@ -49,3 +49,50 @@ class CalibrationCorrectIn(BaseModel):
 
 class DepartureCheckIn(BaseModel):
     tolerance_minutes: int = 10
+
+
+# ---------------------------------------------------------------- 时空证据
+
+
+class TerminalRegisterIn(BaseModel):
+    terminal_id: str
+    vehicle_id: str
+    install_at: datetime
+    note: str = ""
+
+
+class TerminalRetireIn(BaseModel):
+    terminal_id: str
+    vehicle_id: str
+    retire_at: datetime
+    note: str = ""
+
+
+class TrackPointIn(BaseModel):
+    terminal_id: str
+    vehicle_id: str
+    seq: int
+    event_time: datetime
+    lon: float
+    lat: float
+    accuracy_m: float = 10.0
+    delayed: bool = False
+    clock_offset_seconds: int = 0
+    raw_text: str = ""
+    received_at: datetime | None = None
+
+
+class GeoAreaIn(BaseModel):
+    id: str
+    name: str
+    kind: str = Field(pattern="^(target|gate|corridor|buffer|anchor)$")
+    site_id: str | None = None
+    geometry: dict  # GeoJSON
+    buffer_radius_m: float | None = None
+
+
+class RoadModelIn(BaseModel):
+    nodes: list[dict]
+    edges: list[dict]
+    calibrated: bool = False
+    note: str = ""

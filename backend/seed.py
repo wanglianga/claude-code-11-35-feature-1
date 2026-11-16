@@ -1,7 +1,9 @@
-"""演示种子数据：覆盖六个验收场景。幂等——已存在合同 HT-2026-001 时跳过。
+"""演示种子数据：覆盖六个重量验收场景与六个时空证据场景。幂等——已存在合同时跳过。
 
-场景：① 主计量点合同 ② 跨场称重差异（区间重叠） ③ 签收后离场（时钟校正）
-      ④ 校准更正（复审中） ⑤ 双批次争用（冻结分配） ⑥ 跨阶梯区间（边界金额）
+重量场景：① 主计量点合同 ② 跨场称重差异（区间重叠） ③ 签收后离场（时钟校正）
+          ④ 校准更正（复审中） ⑤ 双批次争用（冻结分配） ⑥ 跨阶梯区间（边界金额）
+时空场景：⑦ 可信基线 ⑧ 低精度接近（待核） ⑨ 双走廊（待核） ⑩ 退役终端（不可认证）
+          ⑪ 补传载荷冲突（不可认证） ⑫ 采样空洞（受限）
 """
 
 from datetime import datetime, timedelta, timezone
@@ -11,13 +13,16 @@ from app.models import (
     Batch,
     CalibrationRecord,
     Contract,
+    GeoArea,
     PositionSegment,
     RateCatalog,
+    RoadModel,
     User,
 )
 from app.security import make_password_hash
 from app.services import adjudicator, compiler, departure, evidence, publisher, registry
 from app.services import calibration as calibration_svc
+from app.services import path_inference, spacetime, track
 
 CST = timezone(timedelta(hours=8))
 
@@ -285,8 +290,203 @@ def seed():
         compiler.compile_amounts(db, b6)        # 边界金额 799.98 / 802.84，amount 留空
         publisher.publish(db, b6)
 
+        # ============================================================
+        # 时空证据场景：地理区域、道路模型、终端注册与定位点
+        # ============================================================
+
+        def rect(w, s, e, n):
+            return {"type": "Polygon", "coordinates": [[
+                [w, s], [e, s], [e, n], [w, n], [w, s],
+            ]]}
+
+        def point_geom(lon, lat):
+            return {"type": "Point", "coordinates": [lon, lat]}
+
+        db.add_all([
+            # 目标收运区域（处理场 FAC-01 多边形）
+            GeoArea(id="AREA-FAC01", name="FAC-01 处理场目标区域", kind="target", site_id="FAC-01",
+                    geometry=rect(121.4700, 31.2300, 121.4712, 31.2309)),
+            # 门岗：必须命中该点缓冲才算通过
+            GeoArea(id="GATE-FAC01", name="FAC-01 门岗", kind="gate", site_id="EAST-GATE",
+                    geometry=point_geom(121.47015, 31.23005), buffer_radius_m=25),
+            # 门岗外的停留缓冲区：停留于此不构成门岗通过
+            GeoArea(id="BUFFER-NEAR", name="门岗外等候缓冲区", kind="buffer", site_id=None,
+                    geometry=point_geom(121.4694, 31.2303), buffer_radius_m=30),
+            # 地磅锚点区域
+            GeoArea(id="ANCHOR-WB01", name="东场地磅 WB-01 锚点", kind="anchor", site_id="EAST",
+                    geometry=point_geom(121.4705, 31.2304), buffer_radius_m=25),
+            # 两条道路走廊
+            GeoArea(id="COR-MAIN", name="主进场走廊（南路）", kind="corridor", site_id=None,
+                    geometry=rect(121.4660, 31.2296, 121.4703, 31.23015)),
+            GeoArea(id="COR-ALT", name="备用进场走廊（北路）", kind="corridor", site_id=None,
+                    geometry=rect(121.4660, 31.23085, 121.4703, 31.23125)),
+        ])
         db.commit()
-        print("[seed] 演示数据已写入：6 个验收场景批次、2 个费率版本、3 台地磅校准、2 个测试账号")
+
+        db.add(RoadModel(
+            version=1, calibrated=True, note="FAC-01 周边路网（南主走廊+北备用走廊）",
+            nodes=[
+                {"id": "n1", "lon": 121.4662, "lat": 31.2299},
+                {"id": "n2", "lon": 121.4675, "lat": 31.2299},
+                {"id": "n3", "lon": 121.4688, "lat": 31.2299},
+                {"id": "n4", "lon": 121.47015, "lat": 31.23005},
+                {"id": "n5", "lon": 121.4705, "lat": 31.2304},
+                {"id": "n6", "lon": 121.4708, "lat": 31.2306},
+                {"id": "n7", "lon": 121.4662, "lat": 31.2311},
+                {"id": "n8", "lon": 121.4680, "lat": 31.2311},
+                {"id": "n9", "lon": 121.4700, "lat": 31.2311},
+                {"id": "n10", "lon": 121.4706, "lat": 31.2308},
+            ],
+            edges=[
+                {"from": "n1", "to": "n2", "speed_limit_kmh": 40, "corridor_id": "COR-MAIN"},
+                {"from": "n2", "to": "n3", "speed_limit_kmh": 40, "corridor_id": "COR-MAIN"},
+                {"from": "n3", "to": "n4", "speed_limit_kmh": 20, "corridor_id": "COR-MAIN"},
+                {"from": "n4", "to": "n5", "speed_limit_kmh": 15, "corridor_id": "COR-MAIN"},
+                {"from": "n5", "to": "n6", "speed_limit_kmh": 15, "corridor_id": "COR-MAIN"},
+                {"from": "n7", "to": "n8", "speed_limit_kmh": 40, "corridor_id": "COR-ALT"},
+                {"from": "n8", "to": "n9", "speed_limit_kmh": 40, "corridor_id": "COR-ALT"},
+                {"from": "n9", "to": "n10", "speed_limit_kmh": 20, "corridor_id": "COR-ALT"},
+                {"from": "n10", "to": "n6", "speed_limit_kmh": 15, "corridor_id": "COR-ALT"},
+            ],
+        ))
+        db.commit()
+
+        def tp(term, vehicle, seq, when, lon, lat, acc=8.0, delayed=False, offset=0, received=None):
+            return track.ingest_point(
+                db, terminal_id=term, vehicle_id=vehicle, seq=seq, event_time=dt(when),
+                lon=lon, lat=lat, accuracy_m=acc, delayed=delayed,
+                clock_offset_seconds=offset, raw_text=f"{term} seq{seq} @{when}",
+                received_at=dt(received) if received else None,
+            )
+
+        def st_chain(bid, vehicle, when_date):
+            """时空场景通用任务+门岗+地磅+签收锚点证据链。"""
+            b = mk_batch(bid, "HT-2026-001", vehicle, f"{when_date} 09:00")
+            e = ev(source_type="collection_task", raw_text=f"收运任务单（时空场景）{bid}",
+                   event_time=dt(f"{when_date} 09:00"), site_id="EAST-LINE-3",
+                   payload={"task_no": bid, "plate": vehicle})
+            link(b, e, "task")
+            e = ev(source_type="gate_record", raw_text="东门岗记录（时空场景）",
+                   event_time=dt(f"{when_date} 08:52"), device_id="GATE-EAST", site_id="EAST-GATE",
+                   payload={"plate": vehicle})
+            link(b, e, "gate")
+            e = ev(source_type="weighbridge_reading", raw_text="东场地磅 WB-01（时空场景）",
+                   event_time=dt(f"{when_date} 08:55"), device_id="WB-01", site_id="EAST",
+                   calibration_version=2, payload={"weight_tons": 8.80, "plate": vehicle})
+            link(b, e, "weighing")
+            e = ev(source_type="facility_receipt", raw_text="FAC-01 签收单（时空场景）",
+                   event_time=dt(f"{when_date} 09:00"), device_id="FAC-01-SCALE", site_id="FAC-01",
+                   payload={"weight_tons": 8.75, "plate": vehicle})
+            link(b, e, "receipt")
+            return b
+
+        # ================ 场景⑦ 可信基线（高精度+单终端+锚点互证） ================
+        b7 = st_chain("PC-20261027-007", "沪G-T7001", "2026-10-27")
+        track.register_terminal(db, terminal_id="T-7001", vehicle_id="沪G-T7001",
+                                install_at=dt("2026-09-01 00:00"), note="主力车载终端")
+        for seq, (when, lon, lat) in enumerate([
+            ("2026-10-27 08:46", 121.4662, 31.2299),
+            ("2026-10-27 08:48", 121.4675, 31.2299),
+            ("2026-10-27 08:50", 121.4688, 31.2299),
+            ("2026-10-27 08:52", 121.47015, 31.23005),
+            ("2026-10-27 08:54", 121.4705, 31.2304),
+            ("2026-10-27 08:56", 121.4708, 31.2306),
+        ], start=1):
+            tp("T-7001", "沪G-T7001", seq, when, lon, lat, acc=8.0)
+        adjudicator.adjudicate(db, b7)
+        compiler.compile_amounts(db, b7)
+        publisher.publish(db, b7)
+        spacetime.evaluate_spacetime(db, b7, "AREA-FAC01")       # trusted
+        path_inference.infer_paths(db, b7, "AREA-FAC01")         # 入域概率 1.0，主走廊候选
+
+        # ================ 场景⑧ 低精度接近（边缘待核；缓冲区停留≠门岗） ================
+        b8 = st_chain("PC-20261027-008", "沪G-T8002", "2026-10-27")
+        track.register_terminal(db, terminal_id="T-8002", vehicle_id="沪G-T8002",
+                                install_at=dt("2026-09-01 00:00"), note="民用级 GPS，精度较差")
+        for seq, (when, lon, lat) in enumerate([
+            ("2026-10-27 08:46", 121.4662, 31.2299),
+            ("2026-10-27 08:48", 121.4678, 31.2299),
+            ("2026-10-27 08:50", 121.4690, 31.2299),
+            ("2026-10-27 08:52", 121.4694, 31.2303),   # 门岗外缓冲区停留
+            ("2026-10-27 08:54", 121.4699, 31.2303),   # 精度圆覆盖目标边界，未确定入域
+        ], start=1):
+            tp("T-8002", "沪G-T8002", seq, when, lon, lat, acc=45.0)
+        spacetime.evaluate_spacetime(db, b8, "AREA-FAC01")       # review
+        path_inference.infer_paths(db, b8, "AREA-FAC01")         # 候选保留，入域概率不夸大
+
+        # ================ 场景⑨ 双走廊（轨迹跨两条走廊，归属待核） ================
+        b9 = st_chain("PC-20261027-009", "沪G-T9003", "2026-10-27")
+        track.register_terminal(db, terminal_id="T-9003", vehicle_id="沪G-T9003",
+                                install_at=dt("2026-09-01 00:00"))
+        for seq, (when, lon, lat, acc) in enumerate([
+            ("2026-10-27 08:46", 121.4662, 31.2299, 10.0),   # 南主走廊
+            ("2026-10-27 08:48", 121.4680, 31.2299, 10.0),
+            ("2026-10-27 08:50", 121.4688, 31.2311, 10.0),   # 跳到北备用走廊
+            ("2026-10-27 08:52", 121.4700, 31.2311, 40.0),   # 目标北边缘，精度待核
+        ], start=1):
+            tp("T-9003", "沪G-T9003", seq, when, lon, lat, acc=acc)
+        spacetime.evaluate_spacetime(db, b9, "AREA-FAC01")       # review（R6 双走廊）
+        path_inference.infer_paths(db, b9, "AREA-FAC01")         # 南北候选均保留，空洞不补画
+
+        # ================ 场景⑩ 退役终端上报（不可认证） ================
+        b10 = st_chain("PC-20261027-010", "沪G-T1004", "2026-10-27")
+        track.register_terminal(db, terminal_id="T-1004-OLD", vehicle_id="沪G-T1004",
+                                install_at=dt("2026-08-01 00:00"), note="旧终端")
+        track.retire_terminal(db, terminal_id="T-1004-OLD", vehicle_id="沪G-T1004",
+                              retire_at=dt("2026-10-20 00:00"), note="换新退役")
+        track.register_terminal(db, terminal_id="T-1004-NEW", vehicle_id="沪G-T1004",
+                                install_at=dt("2026-10-21 00:00"), note="新终端（安装期不重叠）")
+        for seq, (when, lon, lat) in enumerate([
+            ("2026-10-27 08:46", 121.4688, 31.2299),
+            ("2026-10-27 08:48", 121.47015, 31.23005),
+            ("2026-10-27 08:50", 121.4705, 31.2304),       # 旧终端“画”出了完整入域路线
+        ], start=1):
+            tp("T-1004-OLD", "沪G-T1004", seq, when, lon, lat, acc=8.0)
+        for seq, (when, lon, lat) in enumerate([
+            ("2026-10-27 08:54", 121.4662, 31.2299),       # 新终端只有场外稀疏点
+            ("2026-10-27 08:56", 121.4675, 31.2299),
+        ], start=1):
+            tp("T-1004-NEW", "沪G-T1004", seq, when, lon, lat, acc=10.0)
+        spacetime.evaluate_spacetime(db, b10, "AREA-FAC01")      # uncertifiable（R1 退役阻断）
+        path_inference.infer_paths(db, b10, "AREA-FAC01")        # 仅用新终端点，入域概率 0
+
+        # ================ 场景⑪ 长时间补传 + 同序列哈希冲突（不可认证） ================
+        b11 = st_chain("PC-20261027-011", "沪G-T1105", "2026-10-27")
+        track.register_terminal(db, terminal_id="T-1105", vehicle_id="沪G-T1105",
+                                install_at=dt("2026-09-01 00:00"))
+        tp("T-1105", "沪G-T1105", 1, "2026-10-27 08:46", 121.4662, 31.2299)
+        tp("T-1105", "沪G-T1105", 2, "2026-10-27 08:48", 121.4675, 31.2299)
+        tp("T-1105", "沪G-T1105", 3, "2026-10-27 08:50", 121.4688, 31.2299)
+        tp("T-1105", "沪G-T1105", 4, "2026-10-27 08:52", 121.47015, 31.23005)
+        _p, outcome = tp("T-1105", "沪G-T1105", 4, "2026-10-27 08:52", 121.47060, 31.23010)
+        assert outcome == "conflict"                    # 同序列不同哈希：两份载荷都保留
+        tp("T-1105", "沪G-T1105", 5, "2026-10-27 08:54", 121.4705, 31.2304,
+           delayed=True, received="2026-10-27 09:40")
+        tp("T-1105", "沪G-T1105", 6, "2026-10-27 08:56", 121.4708, 31.2306,
+           delayed=True, received="2026-10-27 09:42")
+        spacetime.evaluate_spacetime(db, b11, "AREA-FAC01")      # uncertifiable（R7 载荷冲突阻断）
+        path_inference.infer_paths(db, b11, "AREA-FAC01")        # 候选保留双载荷分支，不洗成可信
+
+        # ================ 场景⑫ 受限（轨迹完整但含采样空洞，跳速保持未知） ================
+        b12 = st_chain("PC-20261027-012", "沪G-T1206", "2026-10-27")
+        track.register_terminal(db, terminal_id="T-1206", vehicle_id="沪G-T1206",
+                                install_at=dt("2026-09-01 00:00"), note="通信信号一般的车载终端")
+        for seq, (when, lon, lat) in enumerate([
+            ("2026-10-27 08:46", 121.4662, 31.2299),
+            ("2026-10-27 08:52", 121.47015, 31.23005),   # 与上点间隔 6 分钟：采样空洞
+            ("2026-10-27 08:54", 121.4705, 31.2304),
+            ("2026-10-27 08:56", 121.4708, 31.2306),
+        ], start=1):
+            tp("T-1206", "沪G-T1206", seq, when, lon, lat, acc=8.0)
+        spacetime.evaluate_spacetime(db, b12, "AREA-FAC01")      # limited（仅 R2/R3 warn）
+        path_inference.infer_paths(db, b12, "AREA-FAC01")        # 道路模型在空洞内有真实边，候选无 gaps
+
+        db.commit()
+        print(
+            "[seed] 演示数据已写入：6 个重量验收场景 + 6 个时空证据场景（"
+            "可信/受限/低精度待核/双走廊待核/退役终端不可认证/补传冲突不可认证）、"
+            "6 个地理区域、1 个道路模型、7 台终端注册、2 个测试账号"
+        )
     finally:
         db.close()
 

@@ -4,6 +4,7 @@ import { clearAuth, getUser } from '../api'
 const NAV = [
   { to: '/', label: '总览', end: true },
   { to: '/batches', label: '收运批次' },
+  { to: '/spacetime', label: '时空证据' },
   { to: '/evidence', label: '来源证据库' },
   { to: '/review', label: '复核队列' },
   { to: '/reports', label: '月结报表' },
